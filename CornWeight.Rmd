@@ -1,0 +1,101 @@
+---
+title: "CornWeight"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r,include=TRUE}
+stVincent <- read.csv(file="C:/Users/Josep/Downloads/stVincent.csv",header=TRUE, sep=",")
+sum(is.na(stVincent))
+trainingIndex <- sample(1:nrow(stVincent), 0.8*nrow(stVincent)) 
+trainingData <- stVincent[trainingIndex, ] 
+corn <- lm(harvwt~site+trt,data=trainingData)
+plot(corn)
+x <-model.matrix(harvwt~.,stVincent)[,-1]
+y <- stVincent$harvwt
+n =nrow(stVincent)
+library(glmnet)
+library(pls)
+K = 10
+set.seed(1)
+fold.assignments =sample(rep(1:K,length=n))
+grid <- 10^seq(10,-2,length=100)
+err.cv =matrix(0,K,3)
+colnames(err.cv)=c("ridge","lasso","PCR")
+tuning.best =matrix(0,K,3)
+colnames(tuning.best)=c("ridge","lasso","PCR")
+par(mfrow=c(1,5))
+for(k in 1:K) {
+  cat("Fold",k,"... ")
+  inds =which(fold.assignments==k)
+  x.tr = x[-inds,]
+  y.tr = y[-inds]
+  x.te = x[inds,]
+  y.te = y[inds]
+  set.seed(1)
+  ridge.cv <-cv.glmnet(x.tr, y.tr,alpha=0,lambda=grid)
+  plot(ridge.cv)
+  plot(ridge.cv$glmnet.fit, xvar="lambda")
+  bestlambda <- ridge.cv$lambda.min
+  bestlambda <- ridge.cv$lambda.1se
+  tuning.best [k,1 ] =bestlambda
+  ridge.pred <-predict(ridge.cv,s=bestlambda,newx=x.te )
+  err.cv[k,1]=mean((ridge.pred-y.te)^2)
+  set.seed(1234)
+  lasso.cv <-cv.glmnet(x.tr, y.tr,alpha=1,lambda=grid)
+  plot(lasso.cv)
+  plot(lasso.cv$glmnet.fit, xvar="lambda")
+  bestlambda <- lasso.cv$lambda.min
+  bestlambda <- lasso.cv$lambda.1se
+  tuning.best [k,2 ] =bestlambda
+  lasso.pred <-predict(lasso.cv,s=bestlambda,newx=x.te )
+  err.cv[k,2]=mean((lasso.pred-y.te)^2)
+  set.seed(1234)
+  pcr.cv=pcr(harvwt~., data=stVincent[-inds,],scale=FALSE,validation="CV")
+  bestM =selectNcomp(pcr.cv, "onesigma", plot = TRUE, ylim =c(0, 10000))
+  tuning.best [k,3 ] =bestM
+  pcr.pred=predict(pcr.cv,x.te,ncomp=bestM)
+  err.cv[k,3]=mean((pcr.pred-y.te)^2)
+}
+tuning.best
+library(ggplot2)
+library(reshape2)
+err.cv.df =as.data.frame(err.cv)
+err.cv.melt =melt(err.cv.df)
+library(dplyr)
+df.summary <- err.cv.melt%>%group_by(variable)%>%summarize(ymin=mean(value)-(sd(value)/sqrt(K)),ymax=mean(value)+(sd(value)/sqrt(K)),ymean=mean(value))
+ggplot(data=err.cv.melt,aes(x=variable,y=value))+geom_boxplot()
+err.cv.t.test =t.test(x,y,data=err.cv.melt)
+err.cv.t.test
+set.seed(1234)
+lasso.cv <-cv.glmnet(x, y,alpha=1,lambda=grid)
+plot(lasso.cv)
+abline(v=log(lasso.cv$lambda.min),col="black")
+abline(v=log(lasso.cv$lambda.1se),col="red")
+plot(lasso.cv$glmnet.fit, xvar="lambda")
+abline(v=log(lasso.cv$lambda.min),col="black")
+abline(v=log(lasso.cv$lambda.1se),col="red")
+bestlambda <- lasso.cv$lambda.1se
+lasso <-glmnet(x,y,alpha=0,lambda=bestlambda)
+coeff.est =predict(lasso,type="coefficients",s=bestlambda)
+coeff.est[coeff.est[1]==0,]
+summary(lasso.cv)
+coef(lasso.cv, lasso.cv$lambda.min)
+```
+
+
+Title: Different learning methods to predict corn weight
+Author: Joseph Cruz
+Date: May 13, 2020
+
+Goal: To predict weight of different corn harvests based on where they were harvested and what study they were involved in.
+
+Data: There was a sample size of 324 different datapoints with 7 different potential predictors, either being factors of different levels or numeric vectors. The only two predictors that ended up contributing to the model were site (where the corn was harvested) and trt (which study the yield was a part of). 
+
+Methods: Since this data met the four conditions for linearity, I decided to use a principal component regression, a ridge regression and a lasso regression. I decided to try a principal component regression because it can still function even if we end up having highly correlated explanatory variables. It does assume that the data is linear, which thankfully in this case it is. I decided to use ridge regresion, which could be useful if there is multicollinearity or too many predictors in my model (although it also assumes linearity and also assumes normality) and I also decided to use lasso regression because it can shrink and remove unnecessary coefficients, improving the accuracy of the model (although it again assumes linearity and little to no outlier observations).
+
+Results: With cross validation, the boxplot I made shows that the lasso model had the lowest MSE, which I then fit to all of the data instead of the training data
+
+Conclusion: I used the coef function to see which of my explanatory variables contributed the most, and it turns out that the site variable contributed way more than trt, where siteCPSV made the biggest contribution at 9.49610552. In the t-test, I got a p-value of < 2.2e-16, meaning that we can reject the null hypothesis and that means the factors in our model can meaningfully predict corn weight.
